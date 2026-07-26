@@ -4,7 +4,7 @@
  
 project:
   title:        "TinyGPU-RV32"       # Project title
-  author:       "Your Name Here"     # Your name
+  author:       "Mayank Narayan"     # Your name
   discord:      ""                   # Your discord handle, optional
   description:  "A single-core RV32I RISC-V CPU with a memory-mapped debug module and an int8 vector accelerator (VADD8/VSUB8/VMAX8/RELU8/DOT4I8)."
   language:     "Verilog"            # SystemVerilog files are accepted under this same field
@@ -35,7 +35,7 @@ project:
  
   # Must start with "tt_um_" and be globally unique across the shuttle --
   # include your github username to guarantee that.
-  top_module:  "tt_um_YOURGITHUBUSERNAME_tinygpu_rv32"
+  top_module:  "tt_um_mayank26102006_tinygpu_rv32"
  
 # The pinout section becomes part of the public datasheet. Fill these in
 # to match exactly what tt_um_tinygpu_rv32.sv actually wires to each pin.
