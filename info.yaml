@@ -8,17 +8,14 @@ project:
   discord:      ""                   # Your discord handle, optional
   description:  "A single-core RV32I RISC-V CPU with a memory-mapped debug module and an int8 vector accelerator (VADD8/VSUB8/VMAX8/RELU8/DOT4I8)."
   language:     "Verilog"            # SystemVerilog files are accepted under this same field
-  clock_hz:     1000000              # Lowered from a 10MHz placeholder after a
-                                      # real hardening run: starting WNS was
-                                      # -21.472ns at a 100ns (10MHz) period,
-                                      # implying an actual critical path around
-                                      # ~121ns (~8MHz max). 1MHz (1000ns period)
-                                      # leaves ~8x margin so timing-repair
-                                      # converges quickly instead of grinding
-                                      # for hours right at the edge of what's
-                                      # achievable. Can be raised incrementally
-                                      # once a full clean pass completes, to
-                                      # find the real achievable Fmax.
+  clock_hz:     10000000            # Datasheet metadata only -- does NOT
+                                      # control hardening timing (that's
+                                      # CLOCK_PERIOD in config.json). Synced
+                                      # to match config.json's real fix:
+                                      # 100ns period = 10MHz, chosen after
+                                      # real hardening data showed ~34ns
+                                      # critical path (~29MHz max) at the
+                                      # default 20ns/50MHz target.
  
   # How many tiles your design occupies. 1x1, 1x2, 2x2, etc. Start at the
   # smallest size and let the precheck/hardening run tell you the real
