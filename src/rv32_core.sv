@@ -247,52 +247,7 @@ default: access_misaligned = 1'b1;
 endcase
 endfunction
  
-// Store strobe/data generation happens in combinational decode variables.
-logic [31:0] store_wdata_comb;
-logic [3:0] store_wstrb_comb;
  
-always_comb begin
-store_wdata_comb = 32'd0;
-store_wstrb_comb = 4'b0000;
- 
-unique case (mem_size_d)
-MEM_BYTE: begin
-unique case (mem_addr_d[1:0])
-2'b00: begin store_wdata_comb = {24'd0, rs2_rdata[7:0]}; store_wstrb_comb =
-'b0001; end
-2'b01: begin store_wdata_comb = {16'd0, rs2_rdata[7:0], 8'd0}; store_wstrb_comb =
-'b0010; end
-2'b10: begin store_wdata_comb = {8'd0, rs2_rdata[7:0], 16'd0}; store_wstrb_comb =
-'b0100; end
-2'b11: begin store_wdata_comb = {rs2_rdata[7:0], 24'd0}; store_wstrb_comb =
-'b1000; end
-default: begin store_wdata_comb = 32'd0; store_wstrb_comb = 4'b0000; end
-endcase
-end
- 
-MEM_HALF: begin
-if (mem_addr_d[1] == 1'b0) begin
-store_wdata_comb = {16'd0, rs2_rdata[15:0]};
-store_wstrb_comb = 4'b0011;
-end else begin
-store_wdata_comb = {rs2_rdata[15:0], 16'd0};
-store_wstrb_comb = 4'b1100;
-end
-end
- 
-MEM_WORD: begin
-store_wdata_comb = rs2_rdata;
-store_wstrb_comb = 4'b1111;
-end
- 
-default: begin
-store_wdata_comb = 32'd0;
-store_wstrb_comb = 4'b0000;
-end
-endcase
-end
- 
-// -------------------------------------------------------------------
 // Decode/execute combinational variables
 // -------------------------------------------------------------------
  
@@ -512,9 +467,57 @@ unique case (funct3)
 default: mem_size_d = MEM_WORD;
 endcase
  
-// store_wdata_comb uses mem_addr_d/mem_size_d/rs2_rdata.
-mem_wdata_d = store_wdata_comb;
-mem_wstrb_d = store_wstrb_comb;
+// Store data/strobe computed inline (not in a separate always_comb
+// block) specifically to avoid a two-block circular combinational
+// dependency: mem_addr_d/mem_size_d are set above in this same
+// OPCODE_STORE branch, so computing directly into mem_wdata_d/
+// mem_wstrb_d here is ordinary single-pass sequential logic within one
+// process, with nothing else to be sensitive to.
+//
+// FIX NOTE (2026-07-26): this used to be a separate always_comb block
+// (store_wdata_comb/store_wstrb_comb) that this OPCODE_STORE branch
+// then just read from. That cross-block structure, combined with
+// Icarus Verilog's own documented limitation ("constant selects in
+// always_* processes are not currently supported (all bits will be
+// included)" -- i.e. Icarus widens a process's sensitivity to every
+// bit of a signal instead of just the constant-selected slice actually
+// read), created a genuine infinite combinational oscillation under
+// Icarus specifically, starting right after reset release. Verilator
+// was never affected (it computes sensitivity precisely), which is why
+// this passed 6/6 in simulation while silently hanging forever under
+// the Icarus-based `test` CI job. Root cause confirmed by bisection:
+// stubbing out the old separate block made the identical design and
+// program halt correctly under Icarus, matching Verilator's result
+// exactly. Inlining removes the second process entirely, removing the
+// cycle.
+unique case (mem_size_d)
+MEM_BYTE: begin
+unique case (mem_addr_d[1:0])
+2'b00: begin mem_wdata_d = {24'd0, rs2_rdata[7:0]}; mem_wstrb_d = 4'b0001; end
+2'b01: begin mem_wdata_d = {16'd0, rs2_rdata[7:0], 8'd0}; mem_wstrb_d = 4'b0010; end
+2'b10: begin mem_wdata_d = {8'd0, rs2_rdata[7:0], 16'd0}; mem_wstrb_d = 4'b0100; end
+2'b11: begin mem_wdata_d = {rs2_rdata[7:0], 24'd0}; mem_wstrb_d = 4'b1000; end
+default: begin mem_wdata_d = 32'd0; mem_wstrb_d = 4'b0000; end
+endcase
+end
+MEM_HALF: begin
+if (mem_addr_d[1] == 1'b0) begin
+mem_wdata_d = {16'd0, rs2_rdata[15:0]};
+mem_wstrb_d = 4'b0011;
+end else begin
+mem_wdata_d = {rs2_rdata[15:0], 16'd0};
+mem_wstrb_d = 4'b1100;
+end
+end
+MEM_WORD: begin
+mem_wdata_d = rs2_rdata;
+mem_wstrb_d = 4'b1111;
+end
+default: begin
+mem_wdata_d = 32'd0;
+mem_wstrb_d = 4'b0000;
+end
+endcase
  
 if (!((funct3 == 3'b000) || (funct3 == 3'b001) || (funct3 == 3'b010))) begin
 commit_valid = 1'b1;
