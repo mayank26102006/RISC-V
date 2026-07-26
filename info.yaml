@@ -1,56 +1,75 @@
 # Tiny Tapeout project information
+# See https://tinytapeout.com/faq/#what-is-the-info-yaml-file for the full
+# schema reference.
+ 
 project:
-  title:        ""      # Project title
-  author:       ""      # Your name
-  discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  ""      # One line description of what your project does
-  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
-  clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
-
-  # How many tiles your design occupies? A single tile is about 167x108 uM.
-  tiles: "1x1"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
-
-  # Your top module name must start with "tt_um_". Make it unique by including your github username:
-  top_module:  "tt_um_example"
-
-  # List your project's source files here.
-  # Source files must be in ./src and you must list each source file separately, one per line.
-  # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
+  title:        "TinyGPU-RV32"       # Project title
+  author:       "Your Name Here"     # Your name
+  discord:      ""                   # Your discord handle, optional
+  description:  "A single-core RV32I RISC-V CPU with a memory-mapped debug module and an int8 vector accelerator (VADD8/VSUB8/VMAX8/RELU8/DOT4I8)."
+  language:     "Verilog"            # SystemVerilog files are accepted under this same field
+  clock_hz:     10000000             # Target clock frequency in Hz -- adjust once OpenLane/LibreLane timing closure tells us a real achievable Fmax
+ 
+  # How many tiles your design occupies. 1x1, 1x2, 2x2, etc. Start at the
+  # smallest size and let the precheck/hardening run tell you the real
+  # number -- don't guess this from hand area estimates.
+  tiles: "1x1"
+ 
+  # Set to true only if the design uses the second (analog) power supply.
+  uses_vapwr: false
+ 
+  # List every source file the design needs, in any order (LibreLane's
+  # Yosys read-order isn't file-order-dependent for these). Files must
+  # live in ./src. Do NOT list the standalone/unused decomposed unit
+  # files (alu.sv, decoder.sv, etc.) here -- see docs/info.md for why.
   source_files:
-    - "project.v"
-
-# The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
-# This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
+    - "tinygpu_pkg.sv"
+    - "scratchpad.sv"
+    - "bus_interconnect.sv"
+    - "accel_regs.sv"
+    - "vector_accel.sv"
+    - "rv32_core.sv"
+    - "debug_regs.sv"
+    - "tinygpu_soc.sv"
+    - "tt_um_tinygpu_rv32.sv"
+ 
+  # Must start with "tt_um_" and be globally unique across the shuttle --
+  # include your github username to guarantee that.
+  top_module:  "tt_um_YOURGITHUBUSERNAME_tinygpu_rv32"
+ 
+# The pinout section becomes part of the public datasheet. Fill these in
+# to match exactly what tt_um_tinygpu_rv32.sv actually wires to each pin.
 pinout:
-  # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
+  # Dedicated inputs
+  ui[0]: "dbg_halt_req"
+  ui[1]: "dbg_resume_req"
+  ui[2]: "dbg_step_req"
   ui[3]: ""
   ui[4]: ""
   ui[5]: ""
   ui[6]: ""
   ui[7]: ""
-
-  # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
-
-  # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
-
+ 
+  # Dedicated outputs
+  uo[0]: "cpu_halted"
+  uo[1]: "cpu_trap"
+  uo[2]: "accel_busy"
+  uo[3]: "accel_done"
+  uo[4]: "accel_error"
+  uo[5]: "trap_cause[0]"
+  uo[6]: "trap_cause[1]"
+  uo[7]: "trap_cause[2]"
+ 
+  # Bidirectional pins -- all 8 are driven as outputs only (uio_oe=8'hFF),
+  # exposing the low byte of the program counter for external debug/trace
+  uio[0]: "pc[0] (output only)"
+  uio[1]: "pc[1] (output only)"
+  uio[2]: "pc[2] (output only)"
+  uio[3]: "pc[3] (output only)"
+  uio[4]: "pc[4] (output only)"
+  uio[5]: "pc[5] (output only)"
+  uio[6]: "pc[6] (output only)"
+  uio[7]: "pc[7] (output only)"
+ 
 # Do not change!
 yaml_version: 6
