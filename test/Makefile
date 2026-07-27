@@ -18,6 +18,7 @@ PROJECT_SOURCES = \
 	vector_accel.sv \
 	rv32_core.sv \
 	debug_regs.sv \
+	ext_loader.sv \
 	tinygpu_soc.sv \
 	tt_um_tinygpu_rv32.sv
  
