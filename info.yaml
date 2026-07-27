@@ -20,7 +20,7 @@ project:
   # How many tiles your design occupies. 1x1, 1x2, 2x2, etc. Start at the
   # smallest size and let the precheck/hardening run tell you the real
   # number -- don't guess this from hand area estimates.
-  tiles: "6x4"
+  tiles: "8x4"
  
   # Set to true only if the design uses the second (analog) power supply.
   uses_vapwr: false
