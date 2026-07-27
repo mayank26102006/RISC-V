@@ -26,7 +26,7 @@
 //                               handshake signal; see ext_loader.sv)
 //------------------------------------------------------------------------------
 
-module tt_um_tinygpu_rv32 (
+module tt_um_mayank26102006_tinygpu_rv32 (
 input wire [7:0] ui_in,
 output wire [7:0] uo_out,
 input wire [7:0] uio_in,
