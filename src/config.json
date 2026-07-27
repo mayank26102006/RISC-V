@@ -44,6 +44,7 @@
   "RIGHT_MARGIN_MULT": 6,
   "//": "Absolute die size",
   "FP_SIZING": "absolute",
+  "GRT_ADJUSTMENT": 0.1,
   "GRT_ALLOW_CONGESTION": 1,
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
