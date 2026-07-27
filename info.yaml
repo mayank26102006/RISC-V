@@ -1,7 +1,7 @@
 # Tiny Tapeout project information
 # See https://tinytapeout.com/faq/#what-is-the-info-yaml-file for the full
 # schema reference.
- 
+
 project:
   title:        "TinyGPU-RV32"       # Project title
   author:       "Mayank Narayan"     # Your name
@@ -16,15 +16,23 @@ project:
                                       # real hardening data showed ~34ns
                                       # critical path (~29MHz max) at the
                                       # default 20ns/50MHz target.
- 
-  # How many tiles your design occupies. 1x1, 1x2, 2x2, etc. Start at the
-  # smallest size and let the precheck/hardening run tell you the real
-  # number -- don't guess this from hand area estimates.
+
+  # How many tiles your design occupies. 4x4 -> 6x4 -> 8x4, each got
+  # further than the last (progressively clearing congestion/placement
+  # failures) but 8x4 stalled for 20+ min on a single global-routing
+  # congestion-removal iteration -- real evidence of still-insufficient
+  # room, not a config-tuning issue. Bumped to 10x4.
+  # How many tiles your design occupies. Real hardening data on the new
+  # RV32E design: 148.666% utilization at 4x4 (16 tiles) -> ~23.8 tiles
+  # actually needed. Skipping 6x4 (24 tiles, right at the edge) and going
+  # straight to 8x4 (32 tiles) for real margin, since edge-of-feasibility
+  # tile counts have repeatedly caused placement/routing congestion here
+  # even when nominally over 100%.
   tiles: "8x4"
- 
+
   # Set to true only if the design uses the second (analog) power supply.
   uses_vapwr: false
- 
+
   # List every source file the design needs, in any order (LibreLane's
   # Yosys read-order isn't file-order-dependent for these). Files must
   # live in ./src. Do NOT list the standalone/unused decomposed unit
@@ -37,13 +45,14 @@ project:
     - "vector_accel.sv"
     - "rv32_core.sv"
     - "debug_regs.sv"
+    - "ext_loader.sv"
     - "tinygpu_soc.sv"
     - "tt_um_tinygpu_rv32.sv"
- 
+
   # Must start with "tt_um_" and be globally unique across the shuttle --
   # include your github username to guarantee that.
   top_module:  "tt_um_mayank26102006_tinygpu_rv32"
- 
+
 # The pinout section becomes part of the public datasheet. Fill these in
 # to match exactly what tt_um_tinygpu_rv32.sv actually wires to each pin.
 pinout:
@@ -51,12 +60,12 @@ pinout:
   ui[0]: "dbg_halt_req"
   ui[1]: "dbg_resume_req"
   ui[2]: "dbg_step_req"
-  ui[3]: ""
-  ui[4]: ""
+  ui[3]: "ext_load_mode"
+  ui[4]: "ext_load_bit"
   ui[5]: ""
   ui[6]: ""
   ui[7]: ""
- 
+
   # Dedicated outputs
   uo[0]: "cpu_halted"
   uo[1]: "cpu_trap"
@@ -66,7 +75,7 @@ pinout:
   uo[5]: "trap_cause[0]"
   uo[6]: "trap_cause[1]"
   uo[7]: "trap_cause[2]"
- 
+
   # Bidirectional pins -- all 8 are driven as outputs only (uio_oe=8'hFF),
   # exposing the low byte of the program counter for external debug/trace
   uio[0]: "pc[0] (output only)"
@@ -76,7 +85,7 @@ pinout:
   uio[4]: "pc[4] (output only)"
   uio[5]: "pc[5] (output only)"
   uio[6]: "pc[6] (output only)"
-  uio[7]: "pc[7] (output only)"
- 
+  uio[7]: "ext_load_ready (output only)"
+
 # Do not change!
 yaml_version: 6
