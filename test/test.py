@@ -1,4 +1,3 @@
-
 # SPDX-FileCopyrightText: © 2026 TinyGPU-RV32
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -21,7 +20,7 @@
  
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge, ReadOnly, NextTimeStep
+from cocotb.triggers import ClockCycles, RisingEdge, ReadOnly, NextTimeStep, Timer
  
 MINI_PROGRAM = [
     0x00500093,  # addi x1, x0, 5
@@ -67,9 +66,29 @@ async def load_program_via_pins(dut, words):
     everything after it). Writing ui_in immediately after ReadOnly() is
     also illegal in cocotb (raises RuntimeError: "Attempting settings a
     value during the ReadOnly phase") -- NextTimeStep() moves past that
-    phase into a write-safe point before the next bit is driven.
+    phase into a write-safe point before the next bit is driven. This
+    combination was confirmed correct under RTL simulation (cocotb +
+    Icarus): the loaded program's exact memory contents were read back
+    and matched bit-for-bit, and the CPU ran it and reported PASS.
+ 
+    FIX NOTE 2 (2026-07-27): RTL-level correctness above did NOT carry
+    over to gate-level simulation (gl_test), which showed the CPU
+    trapping on TRAP_ILLEGAL_INSTR almost immediately after release --
+    i.e. the loaded program was still corrupted, but only under
+    gate-level sim. The likely reason: gate-level sim runs with
+    UNIT_DELAY=#1, real non-zero propagation delay through the actual
+    synthesized gate network (far more logic levels than the RTL
+    always_comb abstraction), which delta-cycle ordering (ReadOnly/
+    NextTimeStep) does not account for. Added an explicit real-time
+    settle (Timer) after seeing ready before trusting it, and after
+    driving a new bit before the next check, to give genuine gate
+    propagation delay room to settle. Not independently verified against
+    the real synthesized netlist (not available in the environment this
+    was written in, only Icarus/Verilator RTL simulation and Yosys
+    elaboration were) -- confirm against a real gl_test CI run.
     """
     dut.ui_in.value = (1 << UI_EXT_LOAD_MODE)  # assert ext_load_mode, bit=0
+    await Timer(2, unit="ns")
  
     for word in words:
         for i in range(31, -1, -1):
@@ -77,6 +96,7 @@ async def load_program_via_pins(dut, words):
             while True:
                 await RisingEdge(dut.clk)
                 await ReadOnly()
+                await Timer(1, unit="ns")  # real settle time for gate propagation
                 uio_val = dut.uio_out.value
                 try:
                     ready = (int(uio_val) >> UIO_EXT_LOAD_READY) & 1
@@ -86,9 +106,11 @@ async def load_program_via_pins(dut, words):
                     break
             await NextTimeStep()  # move past ReadOnly -- writes are safe again here
             dut.ui_in.value = (1 << UI_EXT_LOAD_MODE) | (bit << UI_EXT_LOAD_BIT)
+            await Timer(1, unit="ns")  # let the new bit value settle before the next check
  
     await RisingEdge(dut.clk)
     dut.ui_in.value = 0  # drop ext_load_mode -- releases the CPU to run
+    await Timer(2, unit="ns")
  
  
 @cocotb.test()
