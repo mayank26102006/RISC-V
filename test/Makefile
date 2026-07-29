@@ -1,3 +1,4 @@
+
 # Makefile
 # See https://docs.cocotb.org/en/stable/quickstart.html for more info
  
@@ -48,7 +49,7 @@ VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
  
 # List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = test
+COCOTB_TEST_MODULES = test,test_crv,test_bp_perf,test_zicsr
  
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim
