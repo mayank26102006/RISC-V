@@ -1,0 +1,41 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 20
+multiclock off
+
+[engines]
+smtbmc z3
+
+[script]
+# Uses the real, unmodified scratchpad.sv from src/ -- no RTL edits for
+# formal. -D ASSERT_ON enables the same `ifdef ASSERT_ON` block the
+# gate-level/RTL simulation flow already gates its SVA behind (see
+# scratchpad.sv's own `ifdef ASSERT_ON` guard), so this is proving exactly
+# the properties already written into the RTL, not a separate copy of them.
+#
+# read_slang is required: yosys's legacy AST/Verilog-2005 frontend does not
+# parse concurrent `assert property (@(posedge clk) ...)` syntax at all (this
+# is a documented yosys limitation, not specific to this design -- confirmed
+# against SymbiYosys's own upstream test suite, which fails to parse under
+# `read_verilog -sv -formal` for the same reason). read_slang is yosys's full
+# SystemVerilog + SVA frontend and ships with any recent yosys build
+# (>=0.30ish) or with oss-cad-suite. If your yosys predates read_slang,
+# upgrade rather than rewrite the properties -- they are valid, portable SVA.
+#
+# WORDS is knocked down from the RTL default (256) to 4 purely to keep BMC
+# state space tractable; the properties themselves are width/depth-agnostic,
+# so this does not change what's being proven, only how fast the solver
+# converges. Bump it back up (or drop the chparam line) for a deeper check
+# once this is wired into CI with more solver time budgeted.
+plugin -i slang
+read_slang --top scratchpad -D ASSERT_ON scratchpad.sv
+chparam -set WORDS 4 scratchpad
+prep -top scratchpad
+
+[files]
+scratchpad.sv

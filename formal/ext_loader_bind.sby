@@ -1,0 +1,25 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 40
+multiclock off
+
+[engines]
+smtbmc z3
+
+[script]
+plugin -i slang
+# No -D ASSERT_ON: ext_loader.sv's own named-property SVA block is left
+# disabled here (this tool can't lower it -- see header comment in
+# ext_loader_bind.sv); the bind file checks the identical properties via
+# immediate assertions instead.
+read_slang --top ext_loader_bind ext_loader.sv ext_loader_bind.sv
+prep -top ext_loader_bind
+
+[files]
+ext_loader.sv
+ext_loader_bind.sv
