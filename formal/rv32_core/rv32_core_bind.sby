@@ -1,0 +1,22 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 12
+multiclock off
+
+[engines]
+smtbmc z3
+
+[script]
+plugin -i slang
+read_slang --top rv32_core_bind tinygpu_pkg.sv rv32_core.sv rv32_core_bind.sv
+prep -top rv32_core_bind
+
+[files]
+tinygpu_pkg.sv ../../src/tinygpu_pkg.sv
+rv32_core.sv ../../src/rv32_core.sv
+rv32_core_bind.sv
