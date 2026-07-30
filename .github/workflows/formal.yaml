@@ -1,0 +1,58 @@
+name: formal
+ 
+on:
+  push:
+  pull_request:
+ 
+jobs:
+  formal:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - { dir: formal/scratchpad, sby: scratchpad_bind.sby }
+          - { dir: formal/ext_loader, sby: ext_loader_bind.sby }
+          - { dir: formal/rv32_core,  sby: rv32_core_bind.sby }
+    steps:
+      - uses: actions/checkout@v4
+ 
+      # oss-cad-suite is ~700MB; cache it by release tag so this only
+      # downloads once per tag bump, not once per push.
+      - name: Cache oss-cad-suite
+        id: cache-oss-cad-suite
+        uses: actions/cache@v4
+        with:
+          path: oss-cad-suite
+          key: oss-cad-suite-linux-x64-20260629
+ 
+      - name: Download oss-cad-suite
+        if: steps.cache-oss-cad-suite.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o oss-cad-suite.tgz \
+            "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-06-29/oss-cad-suite-linux-x64-20260629.tgz"
+          tar -xzf oss-cad-suite.tgz
+          rm oss-cad-suite.tgz
+ 
+      - name: Run formal proof (bmc)
+        run: |
+          export PATH="$GITHUB_WORKSPACE/oss-cad-suite/bin:$PATH"
+          cd "${{ matrix.module.dir }}"
+          sby -f "${{ matrix.module.sby }}" bmc
+ 
+      - name: Run formal proof (cover) -- confirms properties are non-vacuous
+        run: |
+          export PATH="$GITHUB_WORKSPACE/oss-cad-suite/bin:$PATH"
+          cd "${{ matrix.module.dir }}"
+          sby -f "${{ matrix.module.sby }}" cover
+ 
+      - name: Upload counterexample trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-failure-${{ strategy.job-index }}
+          path: |
+            ${{ matrix.module.dir }}/*_bmc/engine_0/trace*.vcd
+            ${{ matrix.module.dir }}/*_bmc/engine_0/trace_tb.v
+            ${{ matrix.module.dir }}/*_cover/engine_0/trace*.vcd
+          if-no-files-found: ignore
