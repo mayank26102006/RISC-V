@@ -2,60 +2,9 @@
 
 //------------------------------------------------------------------------------
 // tinygpu_soc.sv - TinyGPU-RV32 Top-Level SoC Integration
-//------------------------------------------------------------------------------
-// Project     : TinyGPU-RV32
-// Module      : tinygpu_soc
 // Description : Wires together rv32_core, scratchpad memory, bus
 //               interconnect, debug registers, accelerator registers, and
 //               vector accelerator.
-//
-// This is the SoC top. It is intentionally simple:
-//   - single RV32I core
-//   - ONE shared physical scratchpad serves both instruction fetch and
-//     data access (see "Memory model" below -- this was changed from an
-//     earlier two-memory Harvard layout specifically to roughly halve
-//     flip-flop count for ASIC area, ahead of a Tiny Tapeout submission)
-//   - optional scratchpad1 disabled by default
-//   - memory-mapped accelerator + debug via bus_interconnect
-//
-// Memory model (unified, area-optimized 2026-07-25):
-//   - rv32_core.sv's imem_valid_o is asserted only in state CPU_FETCH,
-//     and its dmem_valid_o (arriving here as scratch0_valid) only in
-//     state CPU_MEM_WAIT -- two different values of the same single FSM
-//     state register, so the two requests are structurally guaranteed
-//     to never be asserted in the same cycle (see ASSERT_ON property
-//     p_imem_dmem_mutually_exclusive below, which fails loudly if that
-//     is ever broken by a future core change).
-//   - Because of that, a single physical scratchpad instance (u_mem) can
-//     safely serve both the fetch and load/store paths through a simple
-//     priority mux, instead of two separate physical memories. This
-//     halves total memory flip-flop count for the same word capacity --
-//     the dominant cost for ASIC tile area on Tiny Tapeout, where plain
-//     flip-flop storage runs roughly 320 bits/tile.
-//   - IMPORTANT CONSEQUENCE: since instructions and data now share one
-//     address space, a running program's stores/loads must target
-//     addresses that don't overlap the program's own instruction words
-//     (word 0 through however long the program is). This wasn't a
-//     concern under the old split-memory model and needs care in any
-//     firmware/test program written against this SoC.
-//   - Zero-wait-state either way.
-//
-// Debug model:
-//   - debug_regs.sv (new) turns MMIO transactions in the DEBUG_BASE window
-//     into the halt/resume/step/PC-write/register-read-write signals that
-//     rv32_core.sv already implements. The external dbg_halt_req_i /
-//     dbg_resume_req_i / dbg_step_req_i top-level pins are OR'd together
-//     with debug_regs' own one-shot pulses, so the core can be controlled
-//     either from raw pins (e.g. a simple testbench or the Tiny Tapeout
-//     ui_in bits) or from software/an external debug probe issuing MMIO
-//     writes in the DEBUG_BASE window -- both paths work simultaneously.
-//   - Previously this window was a hardwired stub
-//     (ready=valid, rdata=0, error=0) with nothing behind it.
-//
-// ASIC note:
-//   - Single clock domain
-//   - No generated clocks
-//   - Synthesizable top
 //------------------------------------------------------------------------------
 
 `include "tinygpu_pkg.sv"
@@ -63,65 +12,33 @@
 module tinygpu_soc #(
     parameter logic [31:0]      RESET_VECTOR       = RESET_VECTOR_DEFAULT,
     parameter bit                ENABLE_SCRATCHPAD1 = 1'b0,
-    // Default sized for the real ASIC target (tt_um_tinygpu_rv32.sv
-    // instantiates this module without overriding SCRATCHPAD_WORDS, so
-    // it gets this default). Shrunk again 2026-07-27 (32 -> 16 words,
-    // 64 bytes) as part of a full area revamp: repeated real hardening
-    // runs at 8x4 kept failing on localized placement problems near
-    // this exact memory region (u_soc.u_mem) even after tile-size,
-    // padding, and displacement tuning. Halving it again cuts the
-    // single largest remaining flip-flop consumer (512->256 bits).
-    // tb_tinygpu_soc.sv explicitly overrides this back up to 256 for
-    // simulation, since the full 6-test verification suite needs the
-    // extra room and simulation doesn't have a tile budget -- so this
-    // default only affects the real chip. The real-chip smoke test
-    // (test/test.py, cocotb) was rewritten to a smaller 15-word program
-    // to fit this new size -- see its own comments for the encoding.
     parameter int unsigned        SCRATCHPAD_WORDS   = 16
 ) (
     input  logic clk,
     input  logic rst_n,
-
-    // Optional external debug control (can be tied off)
     input  logic dbg_halt_req_i,
     input  logic dbg_resume_req_i,
     input  logic dbg_step_req_i,
-
-    // External program loader (2026-07-27) -- see ext_loader.sv header
-    // for the full protocol. Real external path to load a program into
-    // the shared scratchpad from outside the chip; without this, a
-    // fabricated chip has no way to get a program into memory at all.
     input  logic ext_load_mode_i,
     input  logic ext_load_bit_i,
+    
     output logic ext_load_ready_o,
-
-    // Status outputs
     output logic         cpu_halted_o,
     output logic         cpu_trap_o,
     output trap_cause_e  trap_cause_o,
     output logic [31:0]  dbg_pc_o,
     output logic [31:0]  dbg_retire_count_o,
-
-    // Accelerator status outputs
     output logic accel_busy_o,
     output logic accel_done_o,
     output logic accel_error_o
 );
 
-  // -------------------------------------------------------------------
-  // Instruction memory (scratchpad0) wires
-  // -------------------------------------------------------------------
-
+  
   logic        imem_valid;
   logic [31:0] imem_addr;
   logic        imem_ready;
   logic [31:0] imem_rdata;
   logic        imem_error;
-
-  // -------------------------------------------------------------------
-  // Data memory / bus wires
-  // -------------------------------------------------------------------
-
   logic        dmem_valid;
   logic        dmem_we;
   logic [31:0] dmem_addr;
@@ -130,11 +47,6 @@ module tinygpu_soc #(
   logic        dmem_ready;
   logic [31:0] dmem_rdata;
   logic        dmem_error;
-
-  // -------------------------------------------------------------------
-  // Scratchpad0 wires
-  // -------------------------------------------------------------------
-
   logic        scratch0_valid;
   logic        scratch0_we;
   logic [31:0] scratch0_addr;
@@ -144,9 +56,6 @@ module tinygpu_soc #(
   logic [31:0] scratch0_rdata;
   logic        scratch0_error;
 
-  // -------------------------------------------------------------------
-  // Accelerator MMIO wires
-  // -------------------------------------------------------------------
 
   logic        accel_valid;
   logic        accel_we;
@@ -156,7 +65,6 @@ module tinygpu_soc #(
   logic        accel_ready;
   logic [31:0] accel_rdata;
   logic        accel_bus_error;
-
   logic        accel_start;
   accel_cmd_e  accel_cmd;
   logic [31:0] accel_src_a;
@@ -166,10 +74,8 @@ module tinygpu_soc #(
   logic [31:0] accel_dst;
   logic [31:0] accel_result;
 
-  // -------------------------------------------------------------------
-  // Debug MMIO wires
-  // -------------------------------------------------------------------
 
+    
   logic        debug_valid;
   logic        debug_we;
   logic [31:0] debug_addr;
@@ -179,9 +85,7 @@ module tinygpu_soc #(
   logic [31:0] debug_rdata;
   logic        debug_error;
 
-  // -------------------------------------------------------------------
-  // Core status wires (read by both top-level ports and debug_regs)
-  // -------------------------------------------------------------------
+
 
   logic        core_halted;
   logic        core_trap;
@@ -190,9 +94,7 @@ module tinygpu_soc #(
   logic [31:0] core_pc;
   logic [31:0] core_retire_count;
 
-  // -------------------------------------------------------------------
-  // Debug control wires between debug_regs and rv32_core
-  // -------------------------------------------------------------------
+
 
   logic        dbgregs_halt_req;
   logic        dbgregs_resume_req;
@@ -210,18 +112,10 @@ module tinygpu_soc #(
   logic [31:0] dbg_reg_write_data;
   logic [31:0] dbg_reg_read_data;
 
-  // External pins and MMIO-driven requests both reach the core.
   assign core_dbg_halt_req   = dbg_halt_req_i   | dbgregs_halt_req;
   assign core_dbg_resume_req = dbg_resume_req_i | dbgregs_resume_req;
   assign core_dbg_step_req   = dbg_step_req_i   | dbgregs_step_req;
 
-  // -------------------------------------------------------------------
-  // External program loader (2026-07-27)
-  // -------------------------------------------------------------------
-  // While ext_load_mode_i is held high, the CPU is forced into reset
-  // (never contending for the memory bus with the loader) and the
-  // loader's write requests take top priority at the shared memory
-  // port below. See ext_loader.sv for the full protocol.
 
   logic        loader_mem_valid;
   logic [31:0] loader_mem_addr;
@@ -248,10 +142,7 @@ module tinygpu_soc #(
       .mem_wdata_o (loader_mem_wdata)
   );
 
-  // -------------------------------------------------------------------
-  // RV32 core
-  // -------------------------------------------------------------------
-
+  
   rv32_core #(
       .RESET_VECTOR(RESET_VECTOR)
   ) u_core (
@@ -298,33 +189,13 @@ module tinygpu_soc #(
       .retired_instr_o  ()
   );
 
-  // Top-level status outputs mirror the core's internal status wires.
+ 
   assign cpu_halted_o       = core_halted;
   assign cpu_trap_o         = core_trap;
   assign trap_cause_o       = core_trap_cause;
   assign dbg_pc_o           = core_pc;
   assign dbg_retire_count_o = core_retire_count;
 
-  // -------------------------------------------------------------------
-  // Instruction memory: scratchpad0
-  // -------------------------------------------------------------------
-
-  // -------------------------------------------------------------------
-  // Shared instruction+data memory (single physical scratchpad)
-  // -------------------------------------------------------------------
-  // rv32_core.sv only asserts imem_valid_o while state_q==CPU_FETCH and
-  // dmem_valid_o (routed here as scratch0_valid) only while
-  // state_q==CPU_MEM_WAIT -- two different values of the same single
-  // state register, so these two requests are structurally guaranteed
-  // to never be asserted in the same cycle. That means a single shared
-  // physical memory can safely serve both the fetch and the load/store
-  // path with a simple priority mux instead of needing two separate
-  // physical memories (which was the original Harvard-style layout and
-  // doubled the flip-flop count for ASIC area purposes). imem is given
-  // priority in the mux for defensiveness only -- the two are never
-  // actually simultaneous, so the priority never actually resolves a
-  // real conflict; see the ASSERT_ON check below, which fails loudly if
-  // that assumption is ever violated by a future core change.
 
   logic        mem_valid;
   logic        mem_we;
@@ -335,11 +206,7 @@ module tinygpu_soc #(
   logic [31:0] mem_rdata;
   logic        mem_error;
 
-  // Loader writes take top priority. This is defensive, not resolving a
-  // real conflict -- the CPU (and therefore imem_valid/scratch0_valid)
-  // is always held in reset for the entire time the loader is active,
-  // so loader_mem_valid and imem_valid/scratch0_valid are structurally
-  // guaranteed to never actually overlap.
+ 
   assign mem_valid = loader_mem_valid | imem_valid | scratch0_valid;
   assign mem_we     = loader_mem_valid ? 1'b1 : (scratch0_valid ? scratch0_we    : 1'b0);
   assign mem_addr   = loader_mem_valid ? loader_mem_addr : (imem_valid ? imem_addr : scratch0_addr);
@@ -355,18 +222,12 @@ module tinygpu_soc #(
   assign scratch0_error = mem_error & scratch0_valid & !imem_valid;
 
 `ifdef ASSERT_ON
-  // If this ever fires, the mutual-exclusivity assumption above has been
-  // broken by a core change and the shared-memory merge is no longer
-  // safe as written -- go back to two separate physical memories.
   property p_imem_dmem_mutually_exclusive;
     @(posedge clk) disable iff (!rst_n)
     !(imem_valid && scratch0_valid);
   endproperty
   assert property (p_imem_dmem_mutually_exclusive);
 
-  // Same idea for the loader: since the CPU is held in reset for the
-  // entire time ext_load_mode_i is asserted, loader activity and real
-  // CPU-driven memory activity must never overlap either.
   property p_loader_mutually_exclusive;
     @(posedge clk) disable iff (!rst_n)
     loader_mem_valid |-> !(imem_valid || scratch0_valid);
@@ -390,9 +251,7 @@ module tinygpu_soc #(
       .error_o (mem_error)
   );
 
-  // -------------------------------------------------------------------
-  // Data bus interconnect
-  // -------------------------------------------------------------------
+  
 
   bus_interconnect #(
       .ENABLE_SCRATCHPAD1(ENABLE_SCRATCHPAD1)
@@ -443,10 +302,7 @@ module tinygpu_soc #(
       .debug_error_i (debug_error)
   );
 
-  // -------------------------------------------------------------------
-  // Accelerator registers
-  // -------------------------------------------------------------------
-
+ 
   accel_regs u_accel_regs (
       .clk   (clk),
       .rst_n (rst_n),
@@ -474,10 +330,6 @@ module tinygpu_soc #(
       .accel_result_i (accel_result)
   );
 
-  // -------------------------------------------------------------------
-  // Vector accelerator core
-  // -------------------------------------------------------------------
-
   vector_accel u_vector_accel (
       .clk   (clk),
       .rst_n (rst_n),
@@ -496,9 +348,6 @@ module tinygpu_soc #(
       .accel_result_o (accel_result)
   );
 
-  // -------------------------------------------------------------------
-  // Debug registers
-  // -------------------------------------------------------------------
 
   debug_regs u_debug_regs (
       .clk   (clk),
