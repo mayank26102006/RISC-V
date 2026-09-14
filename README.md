@@ -1,42 +1,77 @@
-![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
+TinyGPU-RV32
 
-# Tiny Tapeout Verilog Project Template
+A single-core RISC-V CPU with a memory-mapped debug module and an int8 vector accelerator, built for Tiny Tapeout on SkyWater 130nm.
 
-- [Read the documentation for project](docs/info.md)
+Note on ISA naming: internal comments and info.yaml disagree on whether this is RV32I or RV32E — the register file (regs_q) physically holds 16 entries and rs1/rs2 decode only uses the bottom 4 bits of the 5-bit register address, so registers x16–x31 alias onto x0–x15 rather than trapping. That's closer to RV32E behavior implemented via truncation than either a spec-compliant RV32E (which requires a hardware trap on x16–x31 access) or full RV32I (which needs 32 physical registers). This should be resolved and the docs made consistent before calling the ISA support "done."
 
-## What is Tiny Tapeout?
+What this is
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
+TinyGPU-RV32 is a non-pipelined, single-issue RISC-V control core integrated into a small SoC with three peripherals sharing one 32-bit MMIO address space:
 
-To learn more and get started, visit https://tinytapeout.com.
+CPU core (rv32_core.sv) — sequential FSM: RESET → FETCH → DECODE_EXEC → MEM_WAIT → WRITEBACK, with dedicated TRAP and DEBUG_HALT states. Implements the base integer ISA plus Zicsr (CSR read/modify/write) and trap redirect/MRET, added 2026-07-29.
+Scratchpad memory (scratchpad.sv) — single shared memory for both instruction fetch and data access. Collision-free by construction: fetch and load/store requests originate from different FSM states of the same core, so they structurally can't assert in the same cycle.
+Debug module (debug_regs.sv) — memory-mapped halt / resume / single-step / PC read-write / register read-write / retire-counter / hardware breakpoint / cycle & stall performance counters, reachable either via ui_in pins or by a running program issuing loads/stores to the debug address window (0x9000_0000–0x9000_00FF).
+Vector accelerator (vector_accel.sv) — int8 SIMD unit: VADD8, VSUB8, VMAX8, RELU8 (4-lane packed ops) and DOT4I8 (4-lane signed dot product), driven through a memory-mapped command/operand/result register file (accel_regs.sv) at 0x8000_0000–0x8000_00FF.
+External loader (ext_loader.sv) — a 2-pin serial protocol (ui_in[3] = mode, ui_in[4] = bit) for loading a program into the scratchpad from outside the chip before release from reset.
+Memory map
+Region	Base	Notes
+Scratchpad 0	0x0000_0000	Shared instruction/data memory
+Scratchpad 1	0x0001_0000	Second scratchpad window
+Accelerator	0x8000_0000	CMD / STATUS / SRC_A / SRC_B / SRC_C / LEN / DST / RESULT / ERROR
+Debug	0x9000_0000	STATUS / CONTROL / PC / REG_SELECT / REG_DATA / PASSFAIL / TRAP_CAUSE / RETIRE_COUNT / BP_ADDR / BP_CONTROL / PERF_CYCLE_COUNT / PERF_STALL_COUNT / ACCEL_STATUS / ACCEL_RESULT
+Pinout
+Pin	Direction	Function
+ui_in[0:2]	in	Debug halt / resume / single-step request
+ui_in[3:4]	in	External loader mode / serial data bit
+uo_out[0:1]	out	cpu_halted, cpu_trap
+uo_out[2:4]	out	Accelerator busy, done, error
+uo_out[5:7]	out	trap_cause[2:0]
+uio_out[0:6]	out	PC[6:0] (continuous external trace)
+uio_out[7]	out	External loader ready
+Verification
 
-## Set up your Verilog project
+Three layers, each covering what the others don't:
 
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
+1. Formal (SymbiYosys / Z3), 13 properties across 3 blocks
 
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
+Block	Properties	What's proven
+scratchpad	5	valid → ready every cycle; out-of-range access always errors; in-range access never errors; out-of-range writes never commit; a zero-wstrb write leaves memory unchanged next cycle
+ext_loader	3	Writes to memory only happen in the LOAD_ACTIVE state; force_cpu_reset exactly mirrors ext_load_mode_i; write addresses never exceed SCRATCHPAD_WORDS
+rv32_core (Zicsr/trap subsystem)	5	EBREAK always halts for debug regardless of mtvec; mtvec == 0 never redirects (pre-Zicsr behavior preserved exactly); a real trap redirect correctly saves mepc/mtval/PC; MRET restores MIE/MPIE correctly; CSR writes never reach the register file for an unrecognized address
 
-## Enable GitHub actions to build the results page
+All 13 are checked under fully unconstrained imem_rdata_i/dmem_rdata_i — BMC explores every possible instruction encoding every cycle, not just what the loader or test programs happen to produce. Every property is paired with a cover statement proving its antecedent is actually reachable, not vacuously true.
 
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
+Toolchain note: the properties are implemented as bind-style harnesses using immediate assertions rather than named concurrent SVA properties, because the installed yosys-slang build parses named properties fine but fails at BMC-cell lowering ("expression of type property with dynamic size unsupported for synthesis"). Confirmed as a tool limitation (not an RTL issue) against SymbiYosys's own upstream examples. Each RTL module also carries the "real" named-property version in its own `ifdef ASSERT_ON block for use with a toolchain that supports it (Tabby CAD, JasperGold, VCS, Questa).
 
-## Resources
+2. Constrained-random verification (cocotb)
 
-- [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
-- [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
+test_crv.py cross-checks randomized ALU operations against an independent, from-scratch Python golden model (deliberately not derived from the RTL, so it can't share a bug with it) across a 17-bin functional coverage model (each op, zero operands, equal operands, sign-extension corners, LUI-materialization corners, min/max int32). Pure random sampling is seed-dependent — seed 1 misses different bins than seed 999 — so coverage closure uses directed top-up generators per bin rather than just increasing the random iteration count, guaranteeing 100% closure deterministically instead of by RNG luck.
 
-## What next?
+3. Directed tests
 
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+test.py — golden-path program execution through the real external loader pins (not hierarchical injection), so it runs identically against RTL and the synthesized gate-level netlist.
+test_zicsr.py — CSR read/write round-trip, plus a full trap-redirect → handler → MRET → resumed execution round-trip (proving recovery, not just handler entry).
+test_bp_perf.py — hardware breakpoint and cycle/stall performance counters, exercised entirely through real chip pins and MMIO so it also runs under gate-level simulation.
+Two real bugs found and fixed during verification
+Gate-level-only testbench timing race. test.py originally sampled the external loader's ready signal at posedge clk + 1ns. Under RTL sim (zero-delay flops) this was safely after the transition; under gate-level sim (-DUNIT_DELAY=#1, zero-delay combinational cells) it landed exactly on the flop's CLK→Q edge, sampled a stale 0, and shifted the entire 480-bit load stream right by one bit — corrupting word 0 into an illegal opcode and causing a spurious TRAP_ILLEGAL_INSTR. Root-caused from the failing waveform (every event landed at either +0ns or +1ns, nothing between), not guesswork. Fixed by sampling mid-cycle instead of at the edge.
+Stale-operand bug in the vector accelerator. Caught during verification and turned into a permanent formal regression property (p_result_matches_exec_on_start) proving the registered result always equals the combinational result sampled on the actual start cycle — not a leftover value from a previous command.
+How to test
+Hold rst_n low for a few clock cycles, then release it. The CPU begins fetching from scratchpad address 0.
+Load a program via the external loader protocol on ui_in[3:4], or via the debug module's register-write path once halted.
+uo_out[0]/uo_out[1] report cpu_halted/cpu_trap; uo_out[5:7] report the trap cause; uo_out[2:4] report accelerator busy/done/error.
+uio_out[6:0] continuously exposes the low 7 bits of the PC for external tracing; uio_out[7] reports loader readiness.
+Drive ui_in[0] high for one cycle to request a debug halt, ui_in[2] to single-step, ui_in[1] to resume.
+Running the test suite
+sh
+cd test
+make -B                                  # RTL simulation
+make -B GATES=yes                        # gate-level, after hardening + copying the netlist
+CRV_SEED=<n> make -B TESTCASE=test_crv   # constrained-random with a specific seed
+sh
+cd formal/scratchpad && sby -f scratchpad.sby
+cd formal/ext_loader  && sby -f ext_loader.sby
+cd formal/rv32_core   && sby -f rv32_core_bind.sby
+Known gaps (stated honestly, not silently left out)
+CRV coverage (test_crv.py) currently exercises OP/OP-IMM ALU paths, LUI-based immediate materialization, and the illegal-instruction trap path — it does not yet cover JAL/JALR, loads/stores beyond the debug PASSFAIL write, misaligned-access traps, or the vector accelerator's random operand space. Extending COVERAGE_BINS is the natural next step.
+The info.md firmware bring-up section still has a TODO: a concrete "here's what a loaded program should do" walkthrough for first-time bring-up hasn't been written yet.
+The RV32I/RV32E naming inconsistency noted above should be resolved.
